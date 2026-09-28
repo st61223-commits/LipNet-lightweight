@@ -35,6 +35,34 @@ ONNX 因對模型使用的運算子有原生支援可直接硬體加速而大幅
 
 發射端／接收端即時通話系統，攝影機畫面經 YOLO 嘴唇偵測、裁切、送入 LipNet 模型推論，透過 CTC 解碼與詞彙校正產生字幕文字。已封裝為可獨立執行的應用程式（PyInstaller）。
 
+### 系統架構圖
+
+```mermaid
+flowchart LR
+    subgraph A["使用者 A"]
+        A1[攝影機畫面] --> A2[YOLO 嘴唇偵測／裁切]
+        A2 --> A3["滑動視窗緩衝<br/>(前幀複製補幀，補償封包遺失)"]
+        A3 --> A4[LipNet 模型推論]
+        A4 --> A5[CTC 解碼 ＋ 詞彙校正]
+        A5 --> A6["機器翻譯（可選）"]
+    end
+
+    subgraph B["使用者 B"]
+        B1[攝影機畫面] --> B2[YOLO 嘴唇偵測／裁切]
+        B2 --> B3["滑動視窗緩衝<br/>(前幀複製補幀，補償封包遺失)"]
+        B3 --> B4[LipNet 模型推論]
+        B4 --> B5[CTC 解碼 ＋ 詞彙校正]
+        B5 --> B6["機器翻譯（可選）"]
+    end
+
+    A2 -- "UDP：視訊畫面" --> B7[顯示對方畫面]
+    A6 -- "UDP：字幕文字 ＋ ACK" --> B8[顯示字幕]
+    B2 -- "UDP：視訊畫面" --> A7[顯示對方畫面]
+    B6 -- "UDP：字幕文字 ＋ ACK" --> A8[顯示字幕]
+```
+
+雙方為對稱架構，各自在本機完成「偵測→辨識→解碼」，只透過 UDP 傳送視訊畫面與最終字幕文字（非傳送原始語音辨識負擔），因此可在無獨立顯卡的低階裝置上雙向運作。
+
 ## 資料夾結構
 
 ```
@@ -47,4 +75,21 @@ benchmark/       各版本模型的 WER／CPU 速度 benchmark 腳本
 
 ## 參考文獻
 
-Assael, Y. M., Shillingford, B., Whiteson, S., & de Freitas, N. (2016). *LipNet: End-to-End Sentence-level Lipreading.* arXiv:1611.01599.
+**基礎模型**
+
+- Assael, Y. M., Shillingford, B., Whiteson, S., & de Freitas, N. (2016). *LipNet: End-to-End Sentence-level Lipreading.* arXiv:1611.01599.
+
+**應用案例**
+
+- 三浦典之、御堂義博、猪原秀典（大阪大學）(2024). *Lip2ja：口唇映像による日本語の発話.* 第75回日本気管食道科学会総会・学術講演会発表。喉癌／下咽頭癌術後失聲病人適用，精度約60%，已進入臨床試驗，官方仍表示「急需可離線運作於手機／平板的版本」。https://resou.osaka-u.ac.jp/ja/research/2024/20241015_3
+
+**輕量化方法參考**
+
+- *Towards Practical Lipreading with Distilled and Efficient Models.* arXiv:2007.06504. （深度可分離卷積＋自蒸餾壓縮唇語模型，LRW 資料集上參數量可縮 4～17 倍、準確度幾乎不掉）
+- *LiteVSR: Efficient Visual Speech Recognition.* arXiv:2312.09727. （RWTH Aachen University，用語音 ASR 模型知識蒸餾出輕量視覺模型，CPU 上可即時推論）
+- *A Lightweight Lip-Reading Model with Image Difference Fusion.*（重慶科技大學，以更省算的架構取代 3D CNN）
+
+**幀率與模型比較相關**
+
+- 岐阜大學・Ricoh. *フレームレートと解像度がLip Readingの認識率に与える影響.*（研究幀率／解析度對唇語辨識準確率的影響，與本專題前幀複製補幀實驗主題高度重疊）
+- 九州工業大學. *読唇に有効な深層学習モデルの検討.*（比較 WideResNet／EfficientNet／Transformer 於唇語辨識任務的表現）
