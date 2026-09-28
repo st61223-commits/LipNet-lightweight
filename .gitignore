@@ -1,0 +1,26 @@
+# 模型檔案與訓練快取（太大，不放進git）
+*.h5
+*.onnx
+*.tflite
+*.pt
+*.pb
+data-00000-of-00001
+*.index
+checkpoint
+*.mpg
+*.mp4
+*.avi
+*.npy
+
+# Python
+__pycache__/
+*.pyc
+
+# 打包產物
+build/
+dist/
+*.exe
+
+# 環境/暫存
+.DS_Store
+*.log
