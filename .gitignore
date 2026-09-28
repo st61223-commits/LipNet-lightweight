@@ -24,3 +24,6 @@ dist/
 # 環境/暫存
 .DS_Store
 *.log
+
+# Claude Code 專案設定（僅本機使用，不公開）
+CLAUDE.md

@@ -75,8 +75,7 @@ benchmark/       各版本模型的 WER／CPU 速度 benchmark 腳本
 
 ## 參考文獻
 
-僅列上過國際會議之文獻：
-
+- Assael, Y. M., Shillingford, B., Whiteson, S., & de Freitas, N. *LipNet: End-to-End Sentence-level Lipreading.* arXiv:1611.01599.
 - Ma, P., Martinez, B., Petridis, S., & Pantic, M. *Towards Practical Lipreading with Distilled and Efficient Models.* **ICASSP 2021.** arXiv:2007.06504.
 - *LiteVSR: Efficient Visual Speech Recognition by Learning from Speech Representations of Unlabeled Data.* **ICASSP 2024.** arXiv:2312.09727.
 - *A Lightweight Lip-Reading Model with Image Difference Fusion.* **WCI3DT 2024.**
