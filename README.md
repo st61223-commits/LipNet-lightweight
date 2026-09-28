@@ -123,16 +123,6 @@ flowchart LR
 
 雙方為對稱架構，各自在本機完成「偵測→辨識→解碼」，只透過 UDP 傳送視訊畫面與最終字幕文字，因此可在無獨立顯卡的低階裝置上雙向運作。
 
-## 資料夾結構
-
-```
-camera_system/   即時通話系統
-scripts/         模型訓練、資料快取重製、匯出、診斷等核心腳本
-benchmark/       各版本模型的 WER／CPU 速度 benchmark 腳本
-```
-
-> 模型權重檔、訓練資料快取、影片檔案體積龐大，未包含於此 repo。
-
 ## 參考文獻
 
 - Assael, Y. M., Shillingford, B., Whiteson, S., & de Freitas, N. *LipNet: End-to-End Sentence-level Lipreading.* arXiv:1611.01599.
