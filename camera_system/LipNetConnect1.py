@@ -397,15 +397,12 @@ class LipNetInferenceThread(QThread):
             raw_result = " ".join(predicted_texts) if predicted_texts else "No prediction"
             english_result = correct_sentence(raw_result)
 
-            if self.selected_lang and english_result not in ["No prediction", ""]:
-                try:
-                    translated_result = translator.translate(english_result, dest=self.selected_lang).text
-                except Exception as e:
-                    translated_result = f"翻譯失敗: {e}"
-            else:
-                translated_result = ""
-
-            send_text = f"{english_result} | {translated_result}" if translated_result else english_result
+            # 2026-10-22修正：翻譯改由「接收方」負責（見RemoteTranslateThread）。
+            # 原本是講話的人把自己的話翻成自己選的語言、填在自己視窗底下，
+            # 但真正需要看翻譯的是聽的人，而且語言也應該由聽的人選。
+            # 所以這裡只送英文辨識結果給對方，不再翻譯。
+            translated_result = ""
+            send_text = english_result
             try:
                 s = SubtitleSender(target_ip, local_text_port, send_text)
                 s.start(); s.join()
@@ -420,8 +417,32 @@ class LipNetInferenceThread(QThread):
         self.result_ready.emit(english_result, translated_result, time.time() - t0, self.mode_tag)
 
 
+class RemoteTranslateThread(QThread):
+    """2026-10-22新增：收到對方傳來的英文字幕後，在背景翻成「自己」選的語言。
+    放背景執行緒的原因跟LipNetInferenceThread一樣：googletrans要連網，最久會卡5秒，
+    寫在GUI主執行緒會讓畫面凍住。"""
+    result_ready = pyqtSignal(int, str)
+
+    def __init__(self, seq, english_text, dest_lang):
+        super().__init__()
+        self.seq = seq
+        self.english_text = english_text
+        self.dest_lang = dest_lang
+
+    def run(self):
+        try:
+            translated = translator.translate(self.english_text, dest=self.dest_lang).text
+        except Exception as e:
+            translated = f"翻譯失敗: {e}"
+        self.result_ready.emit(self.seq, translated)
+
+
 # ===== 主介面 =====
 class Endpoint(QWidget):
+    # SubtitleReceiver跑在一般threading.Thread，不能直接改Qt元件文字，
+    # 改成發訊號，讓Qt自動排到GUI主執行緒執行update_subtitle。
+    remote_subtitle_received = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.frame_counter = 0
@@ -576,14 +597,23 @@ class Endpoint(QWidget):
         self.video_label2.setStyleSheet("QLabel { background-color: #111827; border: 2px solid #374151; border-radius: 16px; font-size: 18px; color: #9ca3af; }")
         self._add_shadow(self.video_label2)
 
-        self.predicted_text_label = QLabel("辨識結果:")
-        self.predicted_text_label.setProperty("subtle", True)
+        # 2026-10-22修正：底部欄位改成顯示「對方」的話和翻譯。
+        # predicted_text仍保留（存自己的辨識結果與連線狀態，疊在本機畫面下方、
+        # connect_threads也用它判斷連線），只是不再放進底部欄位。
         self.predicted_text = QLineEdit()
         self.predicted_text.setReadOnly(True)
+        self.remote_text_label = QLabel("對方說:")
+        self.remote_text_label.setProperty("subtle", True)
+        self.remote_text = QLineEdit()
+        self.remote_text.setReadOnly(True)
+        self.remote_text.setStyleSheet("QLineEdit { font-size: 24px; font-weight: 600; padding: 10px 12px; }")
+        self._translate_seq = 0
+        self._translate_threads = set()
         self.translated_text_label = QLabel("翻譯結果:")
         self.translated_text_label.setProperty("subtle", True)
         self.translated_text = QLineEdit()
         self.translated_text.setReadOnly(True)
+        self.translated_text.setStyleSheet("QLineEdit { font-size: 24px; font-weight: 600; padding: 10px 12px; }")
         self.subtitle_label = QLabel("")
 
         group_conn = QGroupBox("Connection")
@@ -601,8 +631,8 @@ class Endpoint(QWidget):
 
         status_bar = QHBoxLayout()
         status_bar.setSpacing(12)
-        status_bar.addWidget(self.predicted_text_label)
-        status_bar.addWidget(self.predicted_text, 1)
+        status_bar.addWidget(self.remote_text_label)
+        status_bar.addWidget(self.remote_text, 1)
         status_bar.addWidget(self.translated_text_label)
         status_bar.addWidget(self.translated_text, 1)
 
@@ -620,7 +650,8 @@ class Endpoint(QWidget):
         self.capture.set(cv2.CAP_PROP_FPS, 25)
 
         self.video_display = VideoDisplay(self.capture)
-        self.subtitle_receiver = SubtitleReceiver(target_text_port, self.update_subtitle)
+        self.remote_subtitle_received.connect(self.update_subtitle)
+        self.subtitle_receiver = SubtitleReceiver(target_text_port, self.remote_subtitle_received.emit)
         self.video_display.frame_ready.connect(self.update_local_video)
         self.video_display.start()
         self.subtitle_receiver.start()
@@ -628,8 +659,31 @@ class Endpoint(QWidget):
     def update_subtitle(self, subtitle):
         if subtitle == "*** Connection from Target IP is allowed ***":
             self.predicted_text.setText(subtitle)
-        else:
-            self.subtitle_label.setText(subtitle)
+            return
+        # 相容舊版：舊版程式送的是「英文 | 翻譯」，只取英文部分，翻譯由自己重做
+        english = subtitle.split(" | ")[0].strip()
+        # 遠端畫面疊字用cv2.putText，不能顯示中文，所以畫面上只疊英文
+        self.subtitle_label.setText(english)
+        is_status = english.startswith("-----") or english.startswith("***")
+        if is_status or english in ["No prediction", ""] or english.startswith("[推論錯誤"):
+            return
+        self.remote_text.setText(english)
+        dest_lang = LANGUAGES.get(self.lang_combo.currentText())
+        if not dest_lang:
+            self.translated_text.setText("")
+            return
+        # 編號：翻譯要連網、完成順序不一定，只接受最新一句的翻譯，避免舊翻譯蓋掉新的
+        self._translate_seq += 1
+        th = RemoteTranslateThread(self._translate_seq, english, dest_lang)
+        th.result_ready.connect(self.on_remote_translated)
+        self._translate_threads.add(th)
+        th.finished.connect(lambda t=th: self._translate_threads.discard(t))
+        th.finished.connect(th.deleteLater)
+        th.start()
+
+    def on_remote_translated(self, seq, translated):
+        if seq == self._translate_seq:
+            self.translated_text.setText(translated)
 
     def start_threads(self):
         sender = SubtitleSender(target_ip, local_text_port, "*** Connection from Target IP is allowed ***")
@@ -643,6 +697,10 @@ class Endpoint(QWidget):
             self.video_label2.setText("Target device is not yet started.")
 
     def connect_threads(self):
+        # 字幕傳送（SubtitleSender）用的是全域 target_ip，原本只在有兩個 ZeroTier IP 時才會自動抓到對方 IP，
+        # 否則停在寫死的舊 IP；按 Connect 時改用畫面上填的 Target IP，字幕才會送到正確的對象
+        global target_ip
+        target_ip = self.target_ip.text().strip()
         tport = self.target_port.text().split('/')[0].strip()
         if self.predicted_text.text() and self.predicted_text.text() != "----- CONNECTION FAILED -----":
             self.video_display.enable_send(self.target_ip.text(), int(tport))
@@ -808,9 +866,8 @@ class Endpoint(QWidget):
         """LipNetInferenceThread推論完成後的回呼，跑在GUI主執行緒（Qt跨執行緒signal自動排程），
         可以安全更新畫面文字。收到結果才把inference_busy解除，讓下一次滑動視窗可以再觸發推論。"""
         self.predicted_text.setText(english_result)
-        self.translated_text.setText(translated_result)
         self.inference_busy = False
-        print(f"辨識[{mode_tag}]: {english_result} | 翻譯: {translated_result} | 用時: {elapsed:.2f}s")
+        print(f"辨識[{mode_tag}]: {english_result} | 用時: {elapsed:.2f}s")
 
 
 if __name__ == '__main__':
